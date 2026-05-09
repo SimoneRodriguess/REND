@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <vector>
+#include <iomanip>
 
 static float resolveScalar(const ScalarVal& s) {
     if (!s.is_random) return s.value;
@@ -50,20 +51,27 @@ struct OBJWriter {
             throw std::runtime_error("cannot open output files");
         std::string mtlName = mtlPath.substr(mtlPath.find_last_of("/\\") + 1);
         obj << "mtllib " << mtlName << "\n\n";
+        mtl << std::fixed << std::setprecision(4);
     }
 
-    std::string newMat(Vec3 color) {
-        std::string name = "mat" + std::to_string(matIndex++);
+    std::string newMat(const std::string& hint, Vec3 color,
+                       float roughness = 0.8f, float metallic = 0.0f) {
+        std::string name = hint + "_mat" + std::to_string(matIndex++);
+        float spec = (1.0f - roughness) * 0.5f;
         mtl << "newmtl " << name << "\n";
         mtl << "Kd " << color.x << " " << color.y << " " << color.z << "\n";
-        mtl << "Ka 0.1 0.1 0.1\nKs 0.0 0.0 0.0\n\n";
+        mtl << "Ka " << color.x*0.15f << " " << color.y*0.15f << " " << color.z*0.15f << "\n";
+        mtl << "Ks " << spec << " " << spec << " " << spec << "\n";
+        mtl << "Ns " << (roughness < 0.01f ? 200.0f : 10.0f * (1.0f - roughness)) << "\n";
+        mtl << "illum 2\n\n";
         return name;
     }
 
-    void writeBox(const std::string& name, Vec3 pos, Vec3 size, Vec3 color) {
+    void writeBox(const std::string& name, Vec3 pos, Vec3 size, Vec3 color,
+                  float roughness = 0.8f) {
         float hw = size.x/2, hh = size.y/2, hd = size.z/2;
         float x = pos.x, y = pos.y, z = pos.z;
-        std::string mat = newMat(color);
+        std::string mat = newMat(name, color, roughness);
         obj << "o " << name << "\nusemtl " << mat << "\n";
         float verts[8][3] = {
             {x-hw,y-hh,z+hd},{x+hw,y-hh,z+hd},{x+hw,y+hh,z+hd},{x-hw,y+hh,z+hd},
@@ -84,7 +92,7 @@ struct OBJWriter {
     void writeIsland(const std::string& name, Vec3 size, float taper, Vec3 color) {
         float hw = size.x/2, hh = size.y/2, hd = size.z/2;
         float tw = hw * taper, td = hd * taper;
-        std::string mat = newMat(color);
+        std::string mat = newMat(name, color, 0.9f);
         obj << "o " << name << "\nusemtl " << mat << "\n";
 
         int gridN = 4;
@@ -99,7 +107,6 @@ struct OBJWriter {
                 topIdx[iz][ix] = vertOffset++;
             }
         }
-
         int b0 = vertOffset;
         obj << "v " << -tw << " " << -hh << " " <<  td << "\n";
         obj << "v " <<  tw << " " << -hh << " " <<  td << "\n";
@@ -113,7 +120,6 @@ struct OBJWriter {
                              << topIdx[iz+1][ix+1] << " " << topIdx[iz+1][ix] << "\n";
 
         obj << "f " << b0+3<<" "<<b0+2<<" "<<b0+1<<" "<<b0<<"\n";
-
         int tbl = topIdx[0][0], tbr = topIdx[0][gridN];
         int ttr = topIdx[gridN][gridN], ttl = topIdx[gridN][0];
         obj << "f " << tbl<<" "<<tbr<<" "<<b0+1<<" "<<b0+0<<"\n";
@@ -124,13 +130,12 @@ struct OBJWriter {
 
     void writeHouse(const std::string& name, Vec3 pos, Vec3 size,
                     float roofHeight, Vec3 wallColor, Vec3 roofColor) {
-        writeBox(name + "_walls", pos, size, wallColor);
+        writeBox(name + "_walls", pos, size, wallColor, 0.85f);
 
         float hw = size.x/2, hd = size.z/2;
         float baseY = pos.y + size.y/2;
         float peakY = baseY + roofHeight;
-
-        std::string mat = newMat(roofColor);
+        std::string mat = newMat(name + "_roof", roofColor, 0.7f);
         obj << "o " << name << "_roof\nusemtl " << mat << "\n";
         obj << "v " << pos.x-hw << " " << baseY << " " << pos.z+hd << "\n";
         obj << "v " << pos.x+hw << " " << baseY << " " << pos.z+hd << "\n";
@@ -145,98 +150,76 @@ struct OBJWriter {
         vertOffset += 5;
     }
 
-    // cylinder: segments around Y axis
     void writeCylinder(const std::string& name, Vec3 pos,
-                       float radius, float height, Vec3 color, int segs = 8) {
-        std::string mat = newMat(color);
+                       float radius, float height, Vec3 color, int segs = 10) {
+        std::string mat = newMat(name, color, 0.9f);
         obj << "o " << name << "\nusemtl " << mat << "\n";
-
         float yBot = pos.y, yTop = pos.y + height;
         int botCenter = vertOffset;
         obj << "v " << pos.x << " " << yBot << " " << pos.z << "\n";
         vertOffset++;
-
         int botRing = vertOffset;
         for (int i = 0; i < segs; i++) {
             float a = 2*PI*i/segs;
-            obj << "v " << pos.x + radius*cosf(a) << " " << yBot << " " << pos.z + radius*sinf(a) << "\n";
+            obj << "v " << pos.x+radius*cosf(a) << " " << yBot << " " << pos.z+radius*sinf(a) << "\n";
         }
         vertOffset += segs;
-
         int topRing = vertOffset;
         for (int i = 0; i < segs; i++) {
             float a = 2*PI*i/segs;
-            obj << "v " << pos.x + radius*cosf(a) << " " << yTop << " " << pos.z + radius*sinf(a) << "\n";
+            obj << "v " << pos.x+radius*cosf(a) << " " << yTop << " " << pos.z+radius*sinf(a) << "\n";
         }
         vertOffset += segs;
-
         int topCenter = vertOffset;
         obj << "v " << pos.x << " " << yTop << " " << pos.z << "\n";
         vertOffset++;
-
-        // bottom cap
         for (int i = 0; i < segs; i++)
-            obj << "f " << botCenter << " " << botRing+i << " " << botRing+(i+1)%segs << "\n";
-
-        // side quads
+            obj << "f " << botCenter<<" "<<botRing+i<<" "<<botRing+(i+1)%segs<<"\n";
         for (int i = 0; i < segs; i++) {
-            int a = botRing + i, b = botRing + (i+1)%segs;
-            int c = topRing + (i+1)%segs, d = topRing + i;
-            obj << "f " << a << " " << b << " " << c << " " << d << "\n";
+            int a=botRing+i, b=botRing+(i+1)%segs, c=topRing+(i+1)%segs, d=topRing+i;
+            obj << "f " << a<<" "<<b<<" "<<c<<" "<<d<<"\n";
         }
-
-        // top cap
         for (int i = 0; i < segs; i++)
-            obj << "f " << topCenter << " " << topRing+(i+1)%segs << " " << topRing+i << "\n";
-
+            obj << "f " << topCenter<<" "<<topRing+(i+1)%segs<<" "<<topRing+i<<"\n";
         obj << "\n";
     }
 
-    // cone: cylinder base tapering to a point
     void writeCone(const std::string& name, Vec3 pos,
-                   float radius, float height, Vec3 color, int segs = 8) {
-        std::string mat = newMat(color);
+                   float radius, float height, Vec3 color, int segs = 10) {
+        std::string mat = newMat(name, color, 0.75f);
         obj << "o " << name << "\nusemtl " << mat << "\n";
-
         float yBot = pos.y, yTop = pos.y + height;
         int baseRing = vertOffset;
         for (int i = 0; i < segs; i++) {
             float a = 2*PI*i/segs;
-            obj << "v " << pos.x + radius*cosf(a) << " " << yBot << " " << pos.z + radius*sinf(a) << "\n";
+            obj << "v " << pos.x+radius*cosf(a) << " " << yBot << " " << pos.z+radius*sinf(a) << "\n";
         }
         vertOffset += segs;
-
         int apex = vertOffset;
         obj << "v " << pos.x << " " << yTop << " " << pos.z << "\n";
         vertOffset++;
-
         int botCenter = vertOffset;
         obj << "v " << pos.x << " " << yBot << " " << pos.z << "\n";
         vertOffset++;
-
-        // bottom cap
         for (int i = 0; i < segs; i++)
-            obj << "f " << botCenter << " " << baseRing+i << " " << baseRing+(i+1)%segs << "\n";
-
-        // side triangles
+            obj << "f " << botCenter<<" "<<baseRing+i<<" "<<baseRing+(i+1)%segs<<"\n";
         for (int i = 0; i < segs; i++)
-            obj << "f " << baseRing+i << " " << apex << " " << baseRing+(i+1)%segs << "\n";
-
+            obj << "f " << baseRing+i<<" "<<apex<<" "<<baseRing+(i+1)%segs<<"\n";
         obj << "\n";
     }
 };
 
 static void genIsland(OBJWriter& w, const SceneObject& obj, int idx) {
-    Vec3  size  = getVec3Prop(obj, "size",  {8, 1.5f, 8});
+    Vec3  size  = getVec3Prop(obj, "size",  {10, 1.5f, 10});
     float taper = getProp(obj, "taper", 0.7f);
     Vec3  color = getVec3Prop(obj, "color", {0.35f, 0.68f, 0.25f});
     w.writeIsland("island_" + std::to_string(idx), size, taper, color);
 }
 
 static void genHouse(OBJWriter& w, const SceneObject& obj, int idx) {
-    Vec3  pos       = getVec3Prop(obj, "position",  {0, 1.5f, 0});
-    Vec3  size      = getVec3Prop(obj, "size",       {3, 2, 3});
-    float roofH     = getProp(obj, "roof_height",    1.5f);
+    Vec3  pos       = getVec3Prop(obj, "position",  {0, 2.25f, 0});
+    Vec3  size      = getVec3Prop(obj, "size",       {3, 3, 3});
+    float roofH     = getProp(obj, "roof_height",    2.0f);
     Vec3  wallColor = getVec3Prop(obj, "color",      {0.9f, 0.9f, 0.85f});
     Vec3  roofColor = getVec3Prop(obj, "roof_color", {0.72f, 0.35f, 0.2f});
     w.writeHouse("house_" + std::to_string(idx), pos, size, roofH, wallColor, roofColor);
@@ -247,18 +230,14 @@ static void genTree(OBJWriter& w, const SceneObject& obj, int idx) {
     float th    = getProp(obj, "trunk_height",     1.5f);
     float cr    = getProp(obj, "canopy_radius",    1.0f);
     Vec3  color = getVec3Prop(obj, "color",        {0.2f, 0.7f, 0.3f});
-
-    Vec3 trunkBase = {pos.x, pos.y, pos.z};
-    Vec3 coneBase  = {pos.x, pos.y + th, pos.z};
-
-    w.writeCylinder("tree_trunk_"  + std::to_string(idx), trunkBase, 0.2f, th,   {0.55f,0.35f,0.15f});
-    w.writeCone    ("tree_canopy_" + std::to_string(idx), coneBase,  cr,   cr*2, color);
+    w.writeCylinder("tree_trunk_"  + std::to_string(idx), {pos.x, pos.y, pos.z},      0.2f, th,   {0.55f,0.35f,0.15f});
+    w.writeCone    ("tree_canopy_" + std::to_string(idx), {pos.x, pos.y + th, pos.z}, cr,   cr*2, color);
 }
 
 static void genSphere(OBJWriter& w, const SceneObject& obj, int idx) {
     Vec3  pos    = getVec3Prop(obj, "position", {0,0,0});
     float radius = getProp(obj, "radius", 1.0f);
-    Vec3  color  = getVec3Prop(obj, "color", {0.6f, 0.6f, 0.9f});
+    Vec3  color  = getVec3Prop(obj, "color", {0.6f,0.6f,0.9f});
     w.writeBox("sphere_" + std::to_string(idx), pos, {radius*2,radius*2,radius*2}, color);
 }
 
