@@ -82,15 +82,11 @@ struct OBJWriter {
     void writeIsland(const std::string& name, Vec3 size, float taper, Vec3 color) {
         float hw = size.x/2, hh = size.y/2, hd = size.z/2;
         float tw = hw * taper, td = hd * taper;
-
         std::string mat = newMat(color);
         obj << "o " << name << "\nusemtl " << mat << "\n";
 
-        // subdivided top face (4x4 grid with noise)
         int gridN = 4;
-        float stepX = size.x / gridN;
-        float stepZ = size.z / gridN;
-
+        float stepX = size.x / gridN, stepZ = size.z / gridN;
         std::vector<std::vector<int>> topIdx(gridN+1, std::vector<int>(gridN+1));
         for (int iz = 0; iz <= gridN; iz++) {
             for (int ix = 0; ix <= gridN; ix++) {
@@ -102,7 +98,6 @@ struct OBJWriter {
             }
         }
 
-        // bottom 4 verts — tapered inward
         int b0 = vertOffset;
         obj << "v " << -tw << " " << -hh << " " <<  td << "\n";
         obj << "v " <<  tw << " " << -hh << " " <<  td << "\n";
@@ -110,24 +105,49 @@ struct OBJWriter {
         obj << "v " << -tw << " " << -hh << " " << -td << "\n";
         vertOffset += 4;
 
-        // top face quads
         for (int iz = 0; iz < gridN; iz++)
             for (int ix = 0; ix < gridN; ix++)
-                obj << "f " << topIdx[iz][ix]   << " " << topIdx[iz][ix+1]   << " "
+                obj << "f " << topIdx[iz][ix] << " " << topIdx[iz][ix+1] << " "
                              << topIdx[iz+1][ix+1] << " " << topIdx[iz+1][ix] << "\n";
 
-        // bottom face
         obj << "f " << b0+3<<" "<<b0+2<<" "<<b0+1<<" "<<b0<<"\n";
 
-        // side faces — connect top edge to bottom corners
-        int tbl = topIdx[0][0],      tbr = topIdx[0][gridN];
+        int tbl = topIdx[0][0], tbr = topIdx[0][gridN];
         int ttr = topIdx[gridN][gridN], ttl = topIdx[gridN][0];
+        obj << "f " << tbl<<" "<<tbr<<" "<<b0+1<<" "<<b0+0<<"\n";
+        obj << "f " << tbr<<" "<<ttr<<" "<<b0+2<<" "<<b0+1<<"\n";
+        obj << "f " << ttr<<" "<<ttl<<" "<<b0+3<<" "<<b0+2<<"\n";
+        obj << "f " << ttl<<" "<<tbl<<" "<<b0+0<<" "<<b0+3<<"\n\n";
+    }
 
-        obj << "f " << tbl <<" "<< tbr <<" "<< b0+1 <<" "<< b0+0 <<"\n";
-        obj << "f " << tbr <<" "<< ttr <<" "<< b0+2 <<" "<< b0+1 <<"\n";
-        obj << "f " << ttr <<" "<< ttl <<" "<< b0+3 <<" "<< b0+2 <<"\n";
-        obj << "f " << ttl <<" "<< tbl <<" "<< b0+0 <<" "<< b0+3 <<"\n";
-        obj << "\n";
+    void writeHouse(const std::string& name, Vec3 pos, Vec3 size,
+                    float roofHeight, Vec3 wallColor, Vec3 roofColor) {
+        // walls
+        writeBox(name + "_walls", pos, size, wallColor);
+
+        // pyramid roof — base sits on top of walls, peak in the center
+        float hw = size.x/2, hd = size.z/2;
+        float baseY = pos.y + size.y/2;
+        float peakY = baseY + roofHeight;
+
+        std::string mat = newMat(roofColor);
+        obj << "o " << name << "_roof\nusemtl " << mat << "\n";
+
+        // 4 base corners + 1 apex
+        obj << "v " << pos.x-hw << " " << baseY << " " << pos.z+hd << "\n";
+        obj << "v " << pos.x+hw << " " << baseY << " " << pos.z+hd << "\n";
+        obj << "v " << pos.x+hw << " " << baseY << " " << pos.z-hd << "\n";
+        obj << "v " << pos.x-hw << " " << baseY << " " << pos.z-hd << "\n";
+        obj << "v " << pos.x    << " " << peakY << " " << pos.z    << "\n";
+
+        int o = vertOffset;
+        // 4 triangular faces
+        obj << "f " << o+0<<" "<<o+1<<" "<<o+4<<"\n";
+        obj << "f " << o+1<<" "<<o+2<<" "<<o+4<<"\n";
+        obj << "f " << o+2<<" "<<o+3<<" "<<o+4<<"\n";
+        obj << "f " << o+3<<" "<<o+0<<" "<<o+4<<"\n\n";
+
+        vertOffset += 5;
     }
 };
 
@@ -139,20 +159,22 @@ static void genIsland(OBJWriter& w, const SceneObject& obj, int idx) {
 }
 
 static void genHouse(OBJWriter& w, const SceneObject& obj, int idx) {
-    Vec3 pos   = getVec3Prop(obj, "position", {0, 1.5f, 0});
-    Vec3 size  = getVec3Prop(obj, "size",     {3, 2, 3});
-    Vec3 color = getVec3Prop(obj, "color",    {0.9f, 0.9f, 0.85f});
-    w.writeBox("house_" + std::to_string(idx), pos, size, color);
+    Vec3  pos       = getVec3Prop(obj, "position",   {0, 1.5f, 0});
+    Vec3  size      = getVec3Prop(obj, "size",        {3, 2, 3});
+    float roofH     = getProp(obj, "roof_height",     1.5f);
+    Vec3  wallColor = getVec3Prop(obj, "color",       {0.9f, 0.9f, 0.85f});
+    Vec3  roofColor = getVec3Prop(obj, "roof_color",  {0.72f, 0.35f, 0.2f});
+    w.writeHouse("house_" + std::to_string(idx), pos, size, roofH, wallColor, roofColor);
 }
 
 static void genTree(OBJWriter& w, const SceneObject& obj, int idx) {
-    Vec3  pos   = getVec3Prop(obj, "position",     {0, 1.5f, 0});
-    float th    = getProp(obj, "trunk_height",      1.5f);
-    float cr    = getProp(obj, "canopy_radius",     1.0f);
-    Vec3  color = getVec3Prop(obj, "color",         {0.2f, 0.7f, 0.3f});
-    Vec3 trunkPos   = {pos.x, pos.y + th/2,          pos.z};
-    Vec3 canopyPos  = {pos.x, pos.y + th + cr*0.75f, pos.z};
-    w.writeBox("tree_trunk_"  + std::to_string(idx), trunkPos,  {0.3f, th, 0.3f},          {0.55f,0.35f,0.15f});
+    Vec3  pos   = getVec3Prop(obj, "position",    {0, 1.5f, 0});
+    float th    = getProp(obj, "trunk_height",     1.5f);
+    float cr    = getProp(obj, "canopy_radius",    1.0f);
+    Vec3  color = getVec3Prop(obj, "color",        {0.2f, 0.7f, 0.3f});
+    Vec3 trunkPos  = {pos.x, pos.y + th/2,          pos.z};
+    Vec3 canopyPos = {pos.x, pos.y + th + cr*0.75f, pos.z};
+    w.writeBox("tree_trunk_"  + std::to_string(idx), trunkPos,  {0.3f, th, 0.3f},     {0.55f,0.35f,0.15f});
     w.writeBox("tree_canopy_" + std::to_string(idx), canopyPos, {cr*2, cr*1.5f, cr*2}, color);
 }
 
