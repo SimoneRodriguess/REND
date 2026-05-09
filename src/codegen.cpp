@@ -36,6 +36,8 @@ static float noise(float x, float z) {
     return ((xi * 1664525 + 1013904223) & 0x7fffffff) / (float)0x7fffffff * 0.18f;
 }
 
+static const float PI = 3.14159265f;
+
 struct OBJWriter {
     std::ofstream obj, mtl;
     int vertOffset = 1;
@@ -122,32 +124,105 @@ struct OBJWriter {
 
     void writeHouse(const std::string& name, Vec3 pos, Vec3 size,
                     float roofHeight, Vec3 wallColor, Vec3 roofColor) {
-        // walls
         writeBox(name + "_walls", pos, size, wallColor);
 
-        // pyramid roof — base sits on top of walls, peak in the center
         float hw = size.x/2, hd = size.z/2;
         float baseY = pos.y + size.y/2;
         float peakY = baseY + roofHeight;
 
         std::string mat = newMat(roofColor);
         obj << "o " << name << "_roof\nusemtl " << mat << "\n";
-
-        // 4 base corners + 1 apex
         obj << "v " << pos.x-hw << " " << baseY << " " << pos.z+hd << "\n";
         obj << "v " << pos.x+hw << " " << baseY << " " << pos.z+hd << "\n";
         obj << "v " << pos.x+hw << " " << baseY << " " << pos.z-hd << "\n";
         obj << "v " << pos.x-hw << " " << baseY << " " << pos.z-hd << "\n";
         obj << "v " << pos.x    << " " << peakY << " " << pos.z    << "\n";
-
         int o = vertOffset;
-        // 4 triangular faces
         obj << "f " << o+0<<" "<<o+1<<" "<<o+4<<"\n";
         obj << "f " << o+1<<" "<<o+2<<" "<<o+4<<"\n";
         obj << "f " << o+2<<" "<<o+3<<" "<<o+4<<"\n";
         obj << "f " << o+3<<" "<<o+0<<" "<<o+4<<"\n\n";
-
         vertOffset += 5;
+    }
+
+    // cylinder: segments around Y axis
+    void writeCylinder(const std::string& name, Vec3 pos,
+                       float radius, float height, Vec3 color, int segs = 8) {
+        std::string mat = newMat(color);
+        obj << "o " << name << "\nusemtl " << mat << "\n";
+
+        float yBot = pos.y, yTop = pos.y + height;
+        int botCenter = vertOffset;
+        obj << "v " << pos.x << " " << yBot << " " << pos.z << "\n";
+        vertOffset++;
+
+        int botRing = vertOffset;
+        for (int i = 0; i < segs; i++) {
+            float a = 2*PI*i/segs;
+            obj << "v " << pos.x + radius*cosf(a) << " " << yBot << " " << pos.z + radius*sinf(a) << "\n";
+        }
+        vertOffset += segs;
+
+        int topRing = vertOffset;
+        for (int i = 0; i < segs; i++) {
+            float a = 2*PI*i/segs;
+            obj << "v " << pos.x + radius*cosf(a) << " " << yTop << " " << pos.z + radius*sinf(a) << "\n";
+        }
+        vertOffset += segs;
+
+        int topCenter = vertOffset;
+        obj << "v " << pos.x << " " << yTop << " " << pos.z << "\n";
+        vertOffset++;
+
+        // bottom cap
+        for (int i = 0; i < segs; i++)
+            obj << "f " << botCenter << " " << botRing+i << " " << botRing+(i+1)%segs << "\n";
+
+        // side quads
+        for (int i = 0; i < segs; i++) {
+            int a = botRing + i, b = botRing + (i+1)%segs;
+            int c = topRing + (i+1)%segs, d = topRing + i;
+            obj << "f " << a << " " << b << " " << c << " " << d << "\n";
+        }
+
+        // top cap
+        for (int i = 0; i < segs; i++)
+            obj << "f " << topCenter << " " << topRing+(i+1)%segs << " " << topRing+i << "\n";
+
+        obj << "\n";
+    }
+
+    // cone: cylinder base tapering to a point
+    void writeCone(const std::string& name, Vec3 pos,
+                   float radius, float height, Vec3 color, int segs = 8) {
+        std::string mat = newMat(color);
+        obj << "o " << name << "\nusemtl " << mat << "\n";
+
+        float yBot = pos.y, yTop = pos.y + height;
+        int baseRing = vertOffset;
+        for (int i = 0; i < segs; i++) {
+            float a = 2*PI*i/segs;
+            obj << "v " << pos.x + radius*cosf(a) << " " << yBot << " " << pos.z + radius*sinf(a) << "\n";
+        }
+        vertOffset += segs;
+
+        int apex = vertOffset;
+        obj << "v " << pos.x << " " << yTop << " " << pos.z << "\n";
+        vertOffset++;
+
+        int botCenter = vertOffset;
+        obj << "v " << pos.x << " " << yBot << " " << pos.z << "\n";
+        vertOffset++;
+
+        // bottom cap
+        for (int i = 0; i < segs; i++)
+            obj << "f " << botCenter << " " << baseRing+i << " " << baseRing+(i+1)%segs << "\n";
+
+        // side triangles
+        for (int i = 0; i < segs; i++)
+            obj << "f " << baseRing+i << " " << apex << " " << baseRing+(i+1)%segs << "\n";
+
+        obj << "\n";
     }
 };
 
@@ -159,11 +234,11 @@ static void genIsland(OBJWriter& w, const SceneObject& obj, int idx) {
 }
 
 static void genHouse(OBJWriter& w, const SceneObject& obj, int idx) {
-    Vec3  pos       = getVec3Prop(obj, "position",   {0, 1.5f, 0});
-    Vec3  size      = getVec3Prop(obj, "size",        {3, 2, 3});
-    float roofH     = getProp(obj, "roof_height",     1.5f);
-    Vec3  wallColor = getVec3Prop(obj, "color",       {0.9f, 0.9f, 0.85f});
-    Vec3  roofColor = getVec3Prop(obj, "roof_color",  {0.72f, 0.35f, 0.2f});
+    Vec3  pos       = getVec3Prop(obj, "position",  {0, 1.5f, 0});
+    Vec3  size      = getVec3Prop(obj, "size",       {3, 2, 3});
+    float roofH     = getProp(obj, "roof_height",    1.5f);
+    Vec3  wallColor = getVec3Prop(obj, "color",      {0.9f, 0.9f, 0.85f});
+    Vec3  roofColor = getVec3Prop(obj, "roof_color", {0.72f, 0.35f, 0.2f});
     w.writeHouse("house_" + std::to_string(idx), pos, size, roofH, wallColor, roofColor);
 }
 
@@ -172,10 +247,12 @@ static void genTree(OBJWriter& w, const SceneObject& obj, int idx) {
     float th    = getProp(obj, "trunk_height",     1.5f);
     float cr    = getProp(obj, "canopy_radius",    1.0f);
     Vec3  color = getVec3Prop(obj, "color",        {0.2f, 0.7f, 0.3f});
-    Vec3 trunkPos  = {pos.x, pos.y + th/2,          pos.z};
-    Vec3 canopyPos = {pos.x, pos.y + th + cr*0.75f, pos.z};
-    w.writeBox("tree_trunk_"  + std::to_string(idx), trunkPos,  {0.3f, th, 0.3f},     {0.55f,0.35f,0.15f});
-    w.writeBox("tree_canopy_" + std::to_string(idx), canopyPos, {cr*2, cr*1.5f, cr*2}, color);
+
+    Vec3 trunkBase = {pos.x, pos.y, pos.z};
+    Vec3 coneBase  = {pos.x, pos.y + th, pos.z};
+
+    w.writeCylinder("tree_trunk_"  + std::to_string(idx), trunkBase, 0.2f, th,   {0.55f,0.35f,0.15f});
+    w.writeCone    ("tree_canopy_" + std::to_string(idx), coneBase,  cr,   cr*2, color);
 }
 
 static void genSphere(OBJWriter& w, const SceneObject& obj, int idx) {
